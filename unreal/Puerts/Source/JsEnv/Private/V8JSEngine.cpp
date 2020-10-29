@@ -26,6 +26,8 @@
 #include "V8InspectorImpl.h"
 #include "V8Utils.h"
 
+#if V8_MAJOR_VERSION < 8
+
 #if PLATFORM_WINDOWS
 #include "Blob/Win64/NativesBlob.h"
 #include "Blob/Win64/SnapshotBlob.h"
@@ -35,12 +37,28 @@
 #elif PLATFORM_ANDROID_ARM64
 #include "Blob/Android/arm64/NativesBlob.h"
 #include "Blob/Android/arm64/SnapshotBlob.h"
-#elif PLATFORM_IOS
-#include "Blob/iOS/arm64/NativesBlob.h"
-#include "Blob/iOS/arm64/SnapshotBlob.h"
 #elif PLATFORM_MAC
 #include "Blob/macOS/NativesBlob.h"
 #include "Blob/macOS/SnapshotBlob.h"
+#elif PLATFORM_IOS
+#include "Blob/iOS/arm64/NativesBlob.h"
+#include "Blob/iOS/arm64/SnapshotBlob.h"
+#endif
+
+#else
+
+#if PLATFORM_WINDOWS
+#include "Blob/Win64MD/SnapshotBlob.h"
+#elif PLATFORM_ANDROID_ARM
+#include "Blob/Android/armv7a/SnapshotBlob.h"
+#elif PLATFORM_ANDROID_ARM64
+#include "Blob/Android/arm64/SnapshotBlob.h"
+#elif PLATFORM_MAC
+#include "Blob/macOS/SnapshotBlob.h"
+#elif PLATFORM_IOS
+#include "Blob/iOS/arm64/SnapshotBlob.h"
+#endif
+
 #endif
 
 namespace puerts
@@ -118,20 +136,21 @@ private:
     V8Inspector* Inspector;
 
     std::shared_ptr<ILogger> Logger;
-
-    std::shared_ptr<v8::StartupData> NativesBlob;
-
-    std::shared_ptr<v8::StartupData> SnapshotBlob;
 };
 
 V8JSEnv::V8JSEnv(): Inspector(nullptr)
 {
+#if V8_MAJOR_VERSION < 8
+    std::shared_ptr<v8::StartupData> NativesBlob;
     if (!NativesBlob)
     {
         NativesBlob = std::make_shared<v8::StartupData>();
         NativesBlob->data = (const char *)NativesBlobCode;
         NativesBlob->raw_size = sizeof(NativesBlobCode);
     }
+    v8::V8::SetNativesDataBlob(NativesBlob.get());
+#endif
+    std::shared_ptr<v8::StartupData> SnapshotBlob;
     if (!SnapshotBlob)
     {
         SnapshotBlob = std::make_shared<v8::StartupData>();
@@ -140,7 +159,6 @@ V8JSEnv::V8JSEnv(): Inspector(nullptr)
     }
 
     // 初始化Isolate和DefaultContext
-    v8::V8::SetNativesDataBlob(NativesBlob.get());
     v8::V8::SetSnapshotDataBlob(SnapshotBlob.get());
 
     CreateParams.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();

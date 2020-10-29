@@ -7,10 +7,69 @@
 
 #include "JSEngine.h"
 #include "V8Utils.h"
+#include "Log.h"
 #include <memory>
+#include "PromiseRejectCallback.hpp"
 
 namespace puerts
 {
+    typedef void(*FreeCallback)(char* Data);
+
+    class ObjectLifeCycleTrace
+    {
+    public:
+        inline ObjectLifeCycleTrace(v8::Isolate* InIsolate,
+            v8::Local<v8::Object> InObject,
+            FreeCallback InCallback,
+            char* InData)
+            : Persistent(InIsolate, InObject),
+            Callback(InCallback),
+            Data(InData)
+        {
+            Persistent.SetWeak(this, WeakCallback, v8::WeakCallbackType::kParameter);
+            InIsolate->AdjustAmountOfExternalAllocatedMemory(sizeof(*this));
+        }
+    private:
+        static void WeakCallback(const v8::WeakCallbackInfo<ObjectLifeCycleTrace>& Info)
+        {
+            ObjectLifeCycleTrace* Self = Info.GetParameter();
+            Self->WeakCallback(Info.GetIsolate());
+            delete Self;
+        }
+
+        inline void WeakCallback(v8::Isolate* InIsolate)
+        {
+            Callback(Data);
+            int64_t ChangeInBytes = -static_cast<int64_t>(sizeof(*this));
+            InIsolate->AdjustAmountOfExternalAllocatedMemory(ChangeInBytes);
+        }
+
+    private:
+        v8::Global<v8::Object> Persistent;
+        FreeCallback const Callback;
+        char* const Data;
+    };
+
+    static void Free(char* Data)
+    {
+        ::free(Data);
+    }
+
+    v8::Local<v8::ArrayBuffer> NewArrayBuffer(v8::Isolate* Isolate, void *Ptr, size_t Size, bool Copy)
+    {
+        void *Data = Ptr;
+
+        if (Copy)
+        {
+            Data = ::malloc(Size);
+            ::memcpy(Data, Ptr, Size);
+        }
+
+        v8::Local<v8::ArrayBuffer> Ab = v8::ArrayBuffer::New(Isolate, Data, Size);
+        new ObjectLifeCycleTrace(Isolate, Ab, Free, static_cast<char*>(Data));
+        return Ab;
+    }
+
     static void EvalWithPath(const v8::FunctionCallbackInfo<v8::Value>& Info)
     {
         v8::Isolate* Isolate = Info.GetIsolate();
@@ -61,12 +120,6 @@ namespace puerts
         v8::V8::SetFlagsFromString(Flags.c_str(), static_cast<int>(Flags.size()));
 #endif
 
-        if (!NativesBlob)
-        {
-            NativesBlob = std::make_unique<v8::StartupData>();
-            NativesBlob->data = (const char *)NativesBlobCode;
-            NativesBlob->raw_size = sizeof(NativesBlobCode);
-        }
         if (!SnapshotBlob)
         {
             SnapshotBlob = std::make_unique<v8::StartupData>();//TODO: 直接用局部变量就可以了吧？
@@ -75,7 +128,6 @@ namespace puerts
         }
 
         // 初始化Isolate和DefaultContext
-        v8::V8::SetNativesDataBlob(NativesBlob.get());
         v8::V8::SetSnapshotDataBlob(SnapshotBlob.get());
 
         CreateParams.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
@@ -92,6 +144,9 @@ namespace puerts
         v8::Local<v8::Object> Global = Context->Global();
 
         Global->Set(Context, FV8Utils::V8String(Isolate, "__tgjsEvalScript"), v8::FunctionTemplate::New(Isolate, &EvalWithPath)->GetFunction(Context).ToLocalChecked()).Check();
+
+        Isolate->SetPromiseRejectCallback(&PromiseRejectCallback<JSEngine>);
+        Global->Set(Context, FV8Utils::V8String(Isolate, "__tgjsSetPromiseRejectCallback"), v8::FunctionTemplate::New(Isolate, &SetPromiseRejectCallback<JSEngine>)->GetFunction(Context).ToLocalChecked()).Check();
     }
 
     JSEngine::~JSEngine()
@@ -101,6 +156,8 @@ namespace puerts
             delete Inspector;
             Inspector = nullptr;
         }
+
+        JsPromiseRejectCallback.Reset();
 
         for (int i = 0; i < Templates.size(); ++i)
         {
@@ -356,7 +413,7 @@ namespace puerts
         return true;
     }
 
-    bool JSEngine::RegisterProperty(int ClassID, const char *Name, bool IsStatic, CSharpFunctionCallback Getter, int64_t GetterData, CSharpFunctionCallback Setter, int64_t SetterData)
+    bool JSEngine::RegisterProperty(int ClassID, const char *Name, bool IsStatic, CSharpFunctionCallback Getter, int64_t GetterData, CSharpFunctionCallback Setter, int64_t SetterData, bool DontDelete)
     {
         v8::Isolate* Isolate = MainIsolate;
         v8::Isolate::Scope IsolateScope(Isolate);
@@ -366,7 +423,12 @@ namespace puerts
 
         if (ClassID >= Templates.size()) return false;
 
-        auto Attr = (Setter == nullptr) ? (v8::PropertyAttribute)(v8::DontDelete | v8::ReadOnly) : v8::DontDelete;
+        auto Attr = (Setter == nullptr) ? v8::ReadOnly : v8::None;
+
+        if (DontDelete)
+        {
+            Attr = (v8::PropertyAttribute)(Attr | v8::DontDelete);
+        }
 
         if (IsStatic)
         {
@@ -396,8 +458,9 @@ namespace puerts
         auto IndexedInfo = new FIndexedInfo(Getter, Setter, Data);
         IndexedInfos.push_back(IndexedInfo);
 
-        Templates[ClassID].Get(Isolate)->PrototypeTemplate()->SetHandler(v8::IndexedPropertyHandlerConfiguration(
-            CSharpIndexedGetterWrap, CSharpIndexedSetterWrap, nullptr, nullptr, nullptr, v8::External::New(Isolate, IndexedInfos[Pos])));
+        Templates[ClassID].Get(Isolate)->InstanceTemplate()->SetHandler(v8::IndexedPropertyHandlerConfiguration(
+            CSharpIndexedGetterWrap, CSharpIndexedSetterWrap, nullptr, nullptr, nullptr, v8::External::New(Isolate, IndexedInfos[Pos]),
+            v8::PropertyHandlerFlags::kNonMasking));
 
         return true;
     }
@@ -508,11 +571,12 @@ namespace puerts
         }
     }
 
-    void JSEngine::InspectorTick()
+    bool JSEngine::InspectorTick()
     {
         if (Inspector != nullptr)
         {
-            Inspector->Tick();
+            return Inspector->Tick();
         }
+        return true;
     }
 }

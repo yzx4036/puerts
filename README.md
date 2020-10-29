@@ -1,5 +1,10 @@
 ![Logo](./pic/puerts_logo.png)
 
+[![license](http://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Tencent/puerts/blob/master/LICENSE)
+[![release](https://img.shields.io/badge/release-v1.0.0-blue.svg)](https://github.com/Tencent/puerts/releases)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue.svg)](https://github.com/Tencent/puerts/pulls)
+![CI](https://github.com/Tencent/puerts/workflows/CI/badge.svg)
+
 ## What？
 
 puerts是游戏引擎下的TypeScript编程解决方案
@@ -24,9 +29,15 @@ puerts是游戏引擎下的TypeScript编程解决方案
 
 * 拷贝插件到您项目
 
-    - unreal engine: 拷贝puerts/unreal下的Puerts目录到您项目的Plugins目录下，可以参考[unreal demo](https://github.com/chexiongsheng/puerts_unreal_demo)
+    - unreal engine
     
-    - unity： 拷贝puerts/unity/Assets下的所有内容到您项目的Assets目录下，可以参考[unity demo](https://github.com/chexiongsheng/puerts_unity_demo)
+        + 拷贝puerts/unreal下的Puerts目录到您项目的Plugins目录下，可以参考[unreal demo](https://github.com/chexiongsheng/puerts_unreal_demo)
+    
+    - unity
+    
+        + 拷贝puerts/unity/Assets下的所有内容到您项目的Assets目录下，可以参考[unity demo](https://github.com/chexiongsheng/puerts_unity_demo)
+        
+        + Plugins要单独下载[releases](https://github.com/Tencent/puerts/releases)，或者自行编译
 
 ## 编程样例
 
@@ -55,14 +66,19 @@ console.log(actor.K2_GetActorLocation().ToString());
 
 ## 调试
 
-* [unreal](doc/vscode_debug_unreal.md)
-* [unity](doc/vscode_debug_unity.md)
+* [unreal](doc/unreal/vscode_debug.md)
+* [unity](doc/unity/vscode_debug.md)
+
+## 常见问题
+
+* [unreal faq](doc/unreal/faq.md)
+* [unity faq](doc/unity/faq.md)
 
 ## 支持的引擎，平台
 
 ### 引擎
 
-* unreal engine 4.22 ~ 4.25
+* unreal engine 4.22 ~ 4.24
 
 * unity 5 ~ 2019
 

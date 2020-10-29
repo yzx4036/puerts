@@ -8,6 +8,8 @@
 #include "JSEngine.h"
 #include "V8Utils.h"
 
+#define LIB_VERSION 7
+
 using puerts::JSEngine;
 using puerts::FValue;
 using puerts::FResultInfo;
@@ -19,6 +21,11 @@ using puerts::JsValueType;
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+V8_EXPORT int GetLibVersion()
+{
+    return LIB_VERSION;
+}
 
 V8_EXPORT v8::Isolate *CreateJSEngine()
 {
@@ -63,16 +70,16 @@ V8_EXPORT int RegisterStruct(v8::Isolate *Isolate, int BaseTypeId, const char *F
     return JsEngine->RegisterClass(FullName, BaseTypeId, Constructor, Destructor, Data, Size);
 }
 
-V8_EXPORT bool RegisterFunction(v8::Isolate *Isolate, int ClassID, const char *Name, bool IsStatic, CSharpFunctionCallback Callback, int64_t Data)
+V8_EXPORT int RegisterFunction(v8::Isolate *Isolate, int ClassID, const char *Name, int IsStatic, CSharpFunctionCallback Callback, int64_t Data)
 {
     auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
-    return JsEngine->RegisterFunction(ClassID, Name, IsStatic, Callback, Data);
+    return JsEngine->RegisterFunction(ClassID, Name, IsStatic, Callback, Data) ? 1 : 0;
 }
 
-V8_EXPORT bool RegisterProperty(v8::Isolate *Isolate, int ClassID, const char *Name, bool IsStatic, CSharpFunctionCallback Getter, int64_t GetterData, CSharpFunctionCallback Setter, int64_t SetterData)
+V8_EXPORT int RegisterProperty(v8::Isolate *Isolate, int ClassID, const char *Name, int IsStatic, CSharpFunctionCallback Getter, int64_t GetterData, CSharpFunctionCallback Setter, int64_t SetterData, int DontDelete)
 {
     auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
-    return JsEngine->RegisterProperty(ClassID, Name, IsStatic, Getter, GetterData, Setter, SetterData);
+    return JsEngine->RegisterProperty(ClassID, Name, IsStatic, Getter, GetterData, Setter, SetterData, DontDelete) ? 1 : 0;
 }
 
 V8_EXPORT const char* GetLastExceptionInfo(v8::Isolate *Isolate, int *Length)
@@ -100,7 +107,7 @@ V8_EXPORT const v8::Value *GetArgumentValue(const v8::FunctionCallbackInfo<v8::V
     return *Info[Index];
 }
 
-V8_EXPORT JsValueType GetJsValueType(v8::Isolate* Isolate, const v8::Value *Value, bool IsOut)
+V8_EXPORT JsValueType GetJsValueType(v8::Isolate* Isolate, const v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -128,12 +135,12 @@ V8_EXPORT JsValueType GetJsValueType(v8::Isolate* Isolate, const v8::Value *Valu
     }
 }
 
-V8_EXPORT JsValueType GetArgumentType(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, int Index, bool IsOut)
+V8_EXPORT JsValueType GetArgumentType(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, int Index, int IsOut)
 {
     return GetJsValueType(Isolate, *Info[Index], IsOut);
 }
 
-V8_EXPORT double GetNumberFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT double GetNumberFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -159,7 +166,7 @@ V8_EXPORT void SetNumberToOutValue(v8::Isolate* Isolate, v8::Value *Value, doubl
     }
 }
 
-V8_EXPORT double GetDateFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT double GetDateFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -184,7 +191,7 @@ V8_EXPORT void SetDateToOutValue(v8::Isolate* Isolate, v8::Value *Value, double 
     }
 }
 
-V8_EXPORT const char *GetStringFromValue(v8::Isolate* Isolate, v8::Value *Value, int *Length, bool IsOut)
+V8_EXPORT const char *GetStringFromValue(v8::Isolate* Isolate, v8::Value *Value, int *Length, int IsOut)
 {
     if (IsOut)
     {
@@ -195,12 +202,20 @@ V8_EXPORT const char *GetStringFromValue(v8::Isolate* Isolate, v8::Value *Value,
     }
     else
     {
+        if (Value->IsNullOrUndefined())
+        {
+            *Length = 0;
+            return nullptr;
+        }
         auto Context = Isolate->GetCurrentContext();
         auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
-        JsEngine->StrBuffer = *(v8::String::Utf8Value(Isolate, Value->ToString(Context).ToLocalChecked()));
-        *Length = static_cast<int>(JsEngine->StrBuffer.length());
+        v8::Local<v8::String> Str;
+        if (!Value->ToString(Context).ToLocal(&Str)) return nullptr;
+        *Length = Str->Utf8Length(Isolate);
+        if (JsEngine->StrBuffer.size() < *Length + 1) JsEngine->StrBuffer.reserve(*Length + 1);
+        Str->WriteUtf8(Isolate, JsEngine->StrBuffer.data());
         
-        return JsEngine->StrBuffer.c_str();
+        return JsEngine->StrBuffer.data();
     }
 }
 
@@ -214,7 +229,7 @@ V8_EXPORT void SetStringToOutValue(v8::Isolate* Isolate, v8::Value *Value, const
     }
 }
 
-V8_EXPORT bool GetBooleanFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT int GetBooleanFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -225,11 +240,11 @@ V8_EXPORT bool GetBooleanFromValue(v8::Isolate* Isolate, v8::Value *Value, bool 
     }
     else
     {
-        return Value->BooleanValue(Isolate);
+        return Value->BooleanValue(Isolate) ? 1 : 0;
     }
 }
 
-V8_EXPORT void SetBooleanToOutValue(v8::Isolate* Isolate, v8::Value *Value, bool B)
+V8_EXPORT void SetBooleanToOutValue(v8::Isolate* Isolate, v8::Value *Value, int B)
 {
     if (Value->IsObject())
     {
@@ -239,7 +254,23 @@ V8_EXPORT void SetBooleanToOutValue(v8::Isolate* Isolate, v8::Value *Value, bool
     }
 }
 
-V8_EXPORT int64_t GetBigIntFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT int ValueIsBigInt(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
+{
+    if (IsOut)
+    {
+        auto Context = Isolate->GetCurrentContext();
+        auto Outer = Value->ToObject(Context).ToLocalChecked();
+        auto Realvalue = Outer->Get(Context, FV8Utils::V8String(Isolate, "value")).ToLocalChecked();
+        return ValueIsBigInt(Isolate, *Realvalue, false);
+    }
+    else
+    {
+        auto Context = Isolate->GetCurrentContext();
+        return Value->IsBigInt() ? 1 : 0;
+    }
+}
+
+V8_EXPORT int64_t GetBigIntFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -265,7 +296,49 @@ V8_EXPORT void SetBigIntToOutValue(v8::Isolate* Isolate, v8::Value *Value, int64
     }
 }
 
-V8_EXPORT void *GetObjectFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT const char* GetArrayBufferFromValue(v8::Isolate* Isolate, v8::Value *Value, int *Length, int IsOut)
+{
+    if (IsOut)
+    {
+        auto Context = Isolate->GetCurrentContext();
+        auto Outer = Value->ToObject(Context).ToLocalChecked();
+        auto Realvalue = Outer->Get(Context, FV8Utils::V8String(Isolate, "value")).ToLocalChecked();
+        return GetArrayBufferFromValue(Isolate, *Realvalue, Length, false);
+    }
+    else
+    {
+        if (Value->IsArrayBufferView())
+        {
+            v8::ArrayBufferView * BuffView = v8::ArrayBufferView::Cast(Value);
+            *Length = static_cast<int>(BuffView->ByteLength());
+            auto ABC = BuffView->Buffer()->GetContents();
+            return static_cast<char*>(ABC.Data()) + BuffView->ByteOffset();
+        }
+        else if (Value->IsArrayBuffer())
+        {
+            auto Ab = v8::ArrayBuffer::Cast(Value);
+            *Length = static_cast<int>(Ab->ByteLength());
+            return static_cast<char*>(Ab->GetContents().Data());
+        }
+        else
+        {
+            return nullptr;
+        }
+    }
+}
+
+V8_EXPORT void SetArrayBufferToOutValue(v8::Isolate* Isolate, v8::Value *Value, unsigned char *Bytes, int Length)
+{
+    if (Value->IsObject())
+    {
+        auto Context = Isolate->GetCurrentContext();
+        auto Outer = Value->ToObject(Context).ToLocalChecked();
+        v8::Handle<v8::ArrayBuffer> Ab = puerts::NewArrayBuffer(Isolate, Bytes, Length, true);
+        auto ReturnVal = Outer->Set(Context, FV8Utils::V8String(Isolate, "value"), Ab);
+    }
+}
+
+V8_EXPORT void *GetObjectFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -281,7 +354,7 @@ V8_EXPORT void *GetObjectFromValue(v8::Isolate* Isolate, v8::Value *Value, bool 
     }
 }
 
-V8_EXPORT int GetTypeIdFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT int GetTypeIdFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -332,7 +405,7 @@ V8_EXPORT void SetNullToOutValue(v8::Isolate* Isolate, v8::Value *Value)
     }
 }
 
-V8_EXPORT JSFunction *GetFunctionFromValue(v8::Isolate* Isolate, v8::Value *Value, bool IsOut)
+V8_EXPORT JSFunction *GetFunctionFromValue(v8::Isolate* Isolate, v8::Value *Value, int IsOut)
 {
     if (IsOut)
     {
@@ -391,9 +464,14 @@ V8_EXPORT void ReturnBigInt(v8::Isolate* Isolate, const v8::FunctionCallbackInfo
     Info.GetReturnValue().Set(v8::BigInt::New(Isolate, BigInt));
 }
 
-V8_EXPORT void ReturnBoolean(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, bool Bool)
+V8_EXPORT void ReturnArrayBuffer(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, unsigned char *Bytes, int Length)
 {
-    Info.GetReturnValue().Set(Bool);
+    Info.GetReturnValue().Set(puerts::NewArrayBuffer(Isolate, Bytes, Length, true));
+}
+
+V8_EXPORT void ReturnBoolean(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, int Bool)
+{
+    Info.GetReturnValue().Set(Bool ? true : false);
 }
 
 V8_EXPORT void ReturnDate(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, double Date)
@@ -430,7 +508,7 @@ V8_EXPORT void PushDateForJSFunction(JSFunction *Function, double DateValue)
     Function->Arguments.push_back(Value);
 }
 
-V8_EXPORT void PushBooleanForJSFunction(JSFunction *Function, bool B)
+V8_EXPORT void PushBooleanForJSFunction(JSFunction *Function, int B)
 {
     FValue Value;
     Value.Type = puerts::Boolean;
@@ -443,6 +521,16 @@ V8_EXPORT void PushBigIntForJSFunction(JSFunction *Function, int64_t V)
     FValue Value;
     Value.Type = puerts::BigInt;
     Value.BigInt = V;
+    Function->Arguments.push_back(Value);
+}
+
+V8_EXPORT void PushArrayBufferForJSFunction(JSFunction *Function, unsigned char * Bytes, int Length)
+{
+    FValue Value;
+    Value.Type = puerts::ArrayBuffer;
+    Value.ArrayBuffer.Length = Length;
+    Value.ArrayBuffer.Bytes = static_cast<unsigned char *>(::malloc(Length));
+    ::memcpy(Value.ArrayBuffer.Bytes, Bytes, Length);
     Function->Arguments.push_back(Value);
 }
 
@@ -479,7 +567,7 @@ V8_EXPORT void PushObjectForJSFunction(JSFunction *Function, int ClassID, void* 
 //    F->Arguments.push_back(Value);
 //}
 
-V8_EXPORT FResultInfo *InvokeJSFunction(JSFunction *Function, bool HasResult)
+V8_EXPORT FResultInfo *InvokeJSFunction(JSFunction *Function, int HasResult)
 {
     if (Function->Invoke(HasResult))
     {
@@ -539,14 +627,21 @@ V8_EXPORT const char *GetStringFromResult(FResultInfo *ResultInfo, int *Length)
     v8::Context::Scope ContextScope(Context);
 
     auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
-    //auto Utf8Str = v8::String::Utf8Value(Isolate, Function->Result.Get(Function->Isolate));
-    JsEngine->StrBuffer = *(v8::String::Utf8Value(Isolate, ResultInfo->Result.Get(Isolate)));
-    *Length = static_cast<int>(JsEngine->StrBuffer.length());
+    v8::Local<v8::String> Str;
+    auto Result = ResultInfo->Result.Get(Isolate);
+    if (Result->IsNullOrUndefined() || !Result->ToString(Context).ToLocal(&Str))
+    {
+        *Length = 0;
+        return nullptr;
+    }
+    *Length = Str->Utf8Length(Isolate);
+    if (JsEngine->StrBuffer.size() < *Length + 1) JsEngine->StrBuffer.reserve(*Length + 1);
+    Str->WriteUtf8(Isolate, JsEngine->StrBuffer.data());
 
-    return JsEngine->StrBuffer.c_str();
+    return JsEngine->StrBuffer.data();
 }
 
-V8_EXPORT bool GetBooleanFromResult(FResultInfo *ResultInfo)
+V8_EXPORT int GetBooleanFromResult(FResultInfo *ResultInfo)
 {
     v8::Isolate* Isolate = ResultInfo->Isolate;
     v8::Isolate::Scope IsolateScope(Isolate);
@@ -555,7 +650,19 @@ V8_EXPORT bool GetBooleanFromResult(FResultInfo *ResultInfo)
     v8::Context::Scope ContextScope(Context);
     auto Result = ResultInfo->Result.Get(Isolate);
 
-    return Result->BooleanValue(Isolate);
+    return Result->BooleanValue(Isolate) ? 1 : 0;
+}
+
+V8_EXPORT int ResultIsBigInt(FResultInfo *ResultInfo)
+{
+    v8::Isolate* Isolate = ResultInfo->Isolate;
+    v8::Isolate::Scope IsolateScope(Isolate);
+    v8::HandleScope HandleScope(Isolate);
+    v8::Local<v8::Context> Context = ResultInfo->Context.Get(Isolate);
+    v8::Context::Scope ContextScope(Context);
+    auto Result = ResultInfo->Result.Get(Isolate);
+
+    return Result->IsBigInt() ? 1 : 0;
 }
 
 V8_EXPORT int64_t GetBigIntFromResult(FResultInfo *ResultInfo)
@@ -568,6 +675,34 @@ V8_EXPORT int64_t GetBigIntFromResult(FResultInfo *ResultInfo)
     auto Result = ResultInfo->Result.Get(Isolate);
 
     return Result->ToBigInt(Context).ToLocalChecked()->Int64Value();
+}
+
+V8_EXPORT const char *GetArrayBufferFromResult(FResultInfo *ResultInfo, int *Length)
+{
+    v8::Isolate* Isolate = ResultInfo->Isolate;
+    v8::Isolate::Scope IsolateScope(Isolate);
+    v8::HandleScope HandleScope(Isolate);
+    v8::Local<v8::Context> Context = ResultInfo->Context.Get(Isolate);
+    v8::Context::Scope ContextScope(Context);
+
+    auto Value = ResultInfo->Result.Get(Isolate);
+    if (Value->IsArrayBufferView())
+    {
+        v8::Local<v8::ArrayBufferView>  BuffView = Value.As<v8::ArrayBufferView>();
+        *Length = static_cast<int>(BuffView->ByteLength());
+        auto ABC = BuffView->Buffer()->GetContents();
+        return static_cast<char*>(ABC.Data()) + BuffView->ByteOffset();
+    }
+    else if (Value->IsArrayBuffer())
+    {
+        auto Ab = v8::Local <v8::ArrayBuffer>::Cast(Value);
+        *Length = static_cast<int>(Ab->ByteLength());
+        return static_cast<char*>(Ab->GetContents().Data());
+    }
+    else
+    {
+        return nullptr;
+    }
 }
 
 V8_EXPORT void *GetObjectFromResult(FResultInfo *ResultInfo)
@@ -624,10 +759,10 @@ V8_EXPORT const char* GetFunctionLastExceptionInfo(JSFunction *Function, int *Le
 
 
 //-------------------------- begin indexed property --------------------------
-V8_EXPORT bool RegisterIndexedProperty(v8::Isolate *Isolate, int ClassID, CSharpIndexedGetterCallback Getter, CSharpIndexedSetterCallback Setter, int64_t Data)
+V8_EXPORT int RegisterIndexedProperty(v8::Isolate *Isolate, int ClassID, CSharpIndexedGetterCallback Getter, CSharpIndexedSetterCallback Setter, int64_t Data)
 {
     auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
-    return JsEngine->RegisterIndexedProperty(ClassID, Getter, Setter, Data);
+    return JsEngine->RegisterIndexedProperty(ClassID, Getter, Setter, Data) ? 1 : 0;
 }
 
 V8_EXPORT void PropertyReturnObject(v8::Isolate* Isolate, const v8::PropertyCallbackInfo<v8::Value>& Info, int ClassID, void* Ptr)
@@ -651,9 +786,14 @@ V8_EXPORT void PropertyReturnBigInt(v8::Isolate* Isolate, const v8::PropertyCall
     Info.GetReturnValue().Set(v8::BigInt::New(Isolate, BigInt));
 }
 
-V8_EXPORT void PropertyReturnBoolean(v8::Isolate* Isolate, const v8::PropertyCallbackInfo<v8::Value>& Info, bool Bool)
+V8_EXPORT void PropertyReturnArrayBuffer(v8::Isolate* Isolate, const v8::PropertyCallbackInfo<v8::Value>& Info, unsigned char* Bytes, int Length)
 {
-    Info.GetReturnValue().Set(Bool);
+    Info.GetReturnValue().Set(puerts::NewArrayBuffer(Isolate, Bytes, Length, true));
+}
+
+V8_EXPORT void PropertyReturnBoolean(v8::Isolate* Isolate, const v8::PropertyCallbackInfo<v8::Value>& Info, int Bool)
+{
+    Info.GetReturnValue().Set(Bool ? true : false);
 }
 
 V8_EXPORT void PropertyReturnDate(v8::Isolate* Isolate, const v8::PropertyCallbackInfo<v8::Value>& Info, double Date)
@@ -683,10 +823,10 @@ V8_EXPORT void DestroyInspector(v8::Isolate *Isolate)
     JsEngine->DestroyInspector();
 }
 
-V8_EXPORT void InspectorTick(v8::Isolate *Isolate)
+V8_EXPORT int InspectorTick(v8::Isolate *Isolate)
 {
     auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
-    JsEngine->InspectorTick();
+    return JsEngine->InspectorTick() ? 1 : 0;
 }
 
 //-------------------------- end debug --------------------------
