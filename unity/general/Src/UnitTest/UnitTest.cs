@@ -986,6 +986,24 @@ namespace Puerts.UnitTest
             jsEnv.Dispose();
             Assert.False(res);
         }
+
+        [Test]
+        public void Reentrant()
+        {
+            var jsEnv = new JsEnv(new TxtLoader());
+            jsEnv.Eval(@"
+                const CS = require('csharp');
+                let obj = new CS.Puerts.UnitTest.Reentrant();
+                function dosomething(){}
+                obj.Callback = () => {
+                    obj.Call(false);
+                    dosomething();// 注释这行，或者Call没返回值就没事
+                }
+                obj.Call(true);
+                
+            ");
+            jsEnv.Dispose();
+        }
     }
 }
 
